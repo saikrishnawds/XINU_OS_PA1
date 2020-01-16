@@ -1,0 +1,52 @@
+1. What are the advantages and disadvantages of each of the two scheduling policies? Also, give the advantages and disadvantages of the round robin scheduling policy originally implemented in Xinu.
+
+Exponential-Distribution Scheduler:
+
+Advantages:
+1) The next process is picked based on the random value generated which follows the exponential -1/λ * log(1 - y). This
+schedules the processes in a random order. We can tweak the way this scheduler work by changing the value of "λ".
+2) This is a simpler approach to eliminate the starvation problem.
+3) Adding or removing a process at any time affects all the process equally thus being a fair scheduler.
+4) As long as the random value generated is truly fair and deterministic, this scheduler is fair to all the processes.
+
+Disadvantages:
+1) The main problem with expdev() is that, it gives more time to low priority processes. So in real life scenarios where
+interactive programs are assigned high priority will struggle in this situation.
+2) Based on the distribution of process's priority, the expdev scheduler might end up giving preference to a set of processes.
+3) it is not deterministic as it is controlled by a random number generator.
+
+
+Linux like scheduler:
+
+Advantages:
+1) Unlike expdev it is more sophisticated and gives preference to high priority processes.
+2) Linux like scheduler is also fair to all the process as it uses goodness value to give each of the process
+some quantum in every epoch.
+3) It does not operate on random variables, so is deterministic.
+4) Based on the performance of each of the process its goodness is given more weightage which helps the processes.
+5) There is a guarantee that all the processes are going to run in every epoch as long as they are in ready state.
+
+Disadvantages:
+1) The task of computing the next process based on goodness and keeping a track of goodness and quantum for every process is a compute-heavy solution. This might affect the performance of the processes that complete the tasks in a very short period of time.
+2) If a process's priority needs to changed, then its effect will only be seen from the next epoch. This will become heavy if the number of processes are very large.
+
+
+Round-Robin Scheduler:
+
+Advantages:
+1) As the logic of the scheduler is very simple, there is minimal overhead for rescheduling.
+2) The higher priority processes are given preference
+3) As it is a round-robin scheduler, processes with equal priorities get close to equal execution time.
+
+Disadvantages:
+1) The main problem is it creates starvation for low priority tasks. This is the main reason we tried to develop the other 2 schedulers.
+
+
+
+2) Describe the way each of the schedulers affects the NULL process.
+
+Linux Like Scheduler: In this case, the nullproc has a goodness of zero(since it was 0 priority). So ideally if there are other processes running, then nullproc is never selected. If all the processes finish execution, then NULLPROC is scheduled.
+
+Exponential-Distribution Scheduler: In this case, since the random number generated will be greater than 0 and according to the logic, the NULLPROC will never be picked and scheduled by the exponential scheduler.
+
+Xinu scheduler: In case of round-robin scheduler, when no other process is running, the NULLPROC would be scheduled.

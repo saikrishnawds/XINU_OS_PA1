@@ -1,0 +1,200 @@
+/* resched.c  -  resched */
+#include <conf.h>
+#include <kernel.h>
+#include <proc.h>
+#include <q.h>
+#include "math.h"
+#include "lab1.h"
+#include "sched.h"
+
+unsigned long currSP;	/* REAL sp of current process */
+extern int ctxsw(int, int, int, int);
+/*-----------------------------------------------------------------------
+ * resched  --  reschedule processor to highest priority ready process
+ *
+ * Notes:	Upon entry, currpid gives current process id.
+ *		Proctab[currpid].pstate gives correct NEXT state for
+ *			current process if other than PRREADY.
+ *------------------------------------------------------------------------
+ */
+int resched()
+{
+	register struct	pentry	*optr;	/* pointer to old process entry */
+	register struct	pentry	*nptr;	/* pointer to new process entry */
+        int expdev_random;
+	int next_proc;        
+        if(sched_class == EXPDISTSCHED)
+        {
+            optr = &proctab[currpid];
+            expdev_random = (int)expdev(LAMBDA);
+            next_proc = pick_nextproc(expdev_random);
+            
+            /* When a process is scheduled, it is taken dequeued, so it is no longer in the readyqueue until the next time it preempts
+ 		and it is reinserted in the queue, but if the second time a random process is created which is less than the current process
+		but since it is not found in the queue, the process next to it will be retruned from the pick_nextproc(), this condition the 
+		process that is currently running is allowed to run for another quantum.*/
+            if ( ((q[next_proc].qkey > optr->pprio) && (optr->pprio > expdev_random ) || (next_proc == NULLPROC) ) && (optr->pstate == PRCURR))
+	    {
+		//printf("currpid: %d, next_proc: %d, rand: %d\n",currpid, next_proc, expdev_random);
+                #ifdef	RTCLOCK
+                preempt = QUANTUM;
+                #endif
+		return(OK);
+            }
+        }
+        else if(sched_class == LINUXSCHED)
+        {
+		//this is executed either because the clkint calls this or one of the syscalls calls this.
+        	//if clkint called this, that means quantum for a process is completed else the preempt is still not 0.
+        	//the current process's time_remaining needs to be updated.
+		
+		int temp_pree = preempt;
+		
+        	
+        	//This is the condition for the MAIN to keep running in the first epoch until its first QUANTUM is reached.
+		if(preempt > 0 && global_start < 1)
+		{
+			return(OK);
+		}
+		optr = &proctab[currpid];
+		if(temp_pree == 0 || currpid == NULLPROC)
+		{
+			optr->goodness = 0;
+			optr->residual_time = 0;
+		}
+		else
+		{
+			optr->goodness = (optr->goodness - optr->residual_time) + temp_pree;
+			optr->residual_time = temp_pree;
+		}
+		//initialize the epoch for the very first time.
+		if(global_start == 0)
+		{	
+			//printf("inside the init epoch : %d\n",global_start);
+			global_start = 1;
+			int iter = 0;
+        		for(iter; iter<NPROC; iter++)
+        		{
+        			if(proctab[iter].pstate != PRFREE)
+        			{
+        				proctab[iter].time_alloted = proctab[iter].pprio;
+        				proctab[iter].goodness = proctab[iter].pprio;
+        			}
+        		}
+				
+		}		
+		
+
+        	int next_proc;
+        	//find the process to be scheduled next -> one with highest goodness.
+        	next_proc = find_next_proc();
+		//printf("%d,%d\n",next_proc,proctab[next_proc].goodness);
+		
+		//If the process that just entered the resched, if it had been preempted by the quantum completion then
+		//optr->residual_time will be 0 or if the process goes into suspended mode then optr->pstate will not be PRCURR
+		//if the max goodness returned by the find_next_proc is 0, then it means there are no runnable process
+		// in the ready queue, so we need to reinit the epoch
+		if((optr->pstate != PRCURR || optr->residual_time == 0) && (proctab[next_proc].goodness == 0))
+		{
+			init_epoch(optr);
+			//printf("|");
+			optr = &proctab[currpid];
+			if(proctab[next_proc].goodness == 0){
+				if(currpid == NULLPROC)
+		:		{return OK;}
+				else
+				{
+					if(optr->pstate == PRCURR)
+					{
+						optr->pstate = PRREADY;
+						insert(currpid, rdyhead, proctab[currpid].pprio);
+					}
+					//After the epoch has been reinitialized, we can pick the next best process and run.
+					next_proc = find_next_proc();
+					nptr = &proctab[next_proc];
+					nptr->pstate = PRCURR;
+					dequeue(next_proc);
+					currpid = next_proc;
+					
+					#ifdef RTCLOCK	
+					preempt = proctab[next_proc].time_alloted;
+					#endif
+					ctxsw((int) &optr->pesp, (int) optr->pirmask, (int) &nptr->pesp, (int) nptr->pirmask);
+					return OK;
+				}
+			}
+		}
+        	
+		//the case, where the old process is preempted, so we need to same the time remaining which
+		//is given by the preempt and we don't need to context switch if the previous proc has the greater
+		//goodness than the one picked from the ready queue.
+		if(optr->goodness > 0 && optr->goodness >= proctab[next_proc].goodness && optr->pstate == PRCURR)
+		{
+			optr->residual_time= preempt;
+			return OK;
+		}
+		
+
+		//If the max goodness is not zero and if the previous process was preempted.
+		else if((proctab[next_proc].goodness) > 0 && (optr->goodness < proctab[next_proc].goodness || optr->residual_time == 0 || optr->pstate != PRCURR))
+		{
+			//assign the next proc and schedule it by context switching it with prev process.	
+			nptr = &proctab[next_proc];
+			preempt = nptr->time_alloted;
+			
+			if(optr->pstate ==PRCURR)
+			{
+				optr->pstate = PRREADY;
+				insert(currpid,rdyhead,optr->pprio);
+			}
+			nptr->pstate = PRCURR;
+			dequeue(next_proc);
+			currpid = next_proc;	
+			ctxsw((int) &optr->pesp, (int) optr->pirmask, (int) &nptr->pesp, (int) nptr->pirmask);
+			return OK;
+		}
+		else
+		{
+			return SYSERR;
+		}
+	}		
+	//the normal scheduler which was already there.
+	else
+	{
+		if( ( (optr= &proctab[currpid])->pstate == PRCURR) && (lastkey(rdytail)<optr->pprio)) 
+		{	
+		return(OK);
+		}
+	}
+	
+	/* force context switch */
+	if (optr->pstate == PRCURR) {
+		optr->pstate = PRREADY;
+		insert(currpid,rdyhead,optr->pprio);
+	}
+
+	//Exponential distribution scheduler
+	//pick the proctab for our scheduled process and assign the currpid and nptr
+	//inside getproc(), we are dequeuing the next_proc so the next time it is inserted
+	//it will sit behind a same priority task which takes care of round-robin
+	if(sched_class == EXPDISTSCHED)
+	{
+		currpid = getproc(next_proc);
+		nptr = &proctab[currpid];
+	}
+	//Linux Like scheduler
+	else
+	{
+		nptr = &proctab[ (currpid = getlast(rdytail)) ];
+	}
+	/* remove highest priority process at end of ready list */
+	nptr->pstate = PRCURR;		/* mark it currently running	*/
+        #ifdef	RTCLOCK
+                preempt = QUANTUM;		/* reset preemption counter	*/
+        #endif
+	
+	ctxsw((int)&optr->pesp, (int)optr->pirmask, (int)&nptr->pesp, (int)nptr->pirmask);
+	
+	/* The OLD process returns here when resumed. */
+	return OK;
+}
